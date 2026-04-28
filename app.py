@@ -9,6 +9,8 @@ import streamlit as st
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.impute import SimpleImputer
+from sklearn.metrics import accuracy_score, roc_auc_score
+from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
 
@@ -61,7 +63,10 @@ def build_fallback_pipeline(df: pd.DataFrame) -> Pipeline:
 
 @st.cache_data
 def load_dataset() -> pd.DataFrame:
-    return pd.read_csv(DATA_PATH)
+    dataset = pd.read_csv(DATA_PATH)
+    if dataset["Target"].dtype == "object":
+        dataset["Target"] = dataset["Target"].map({"Yes": 1, "No": 0})
+    return dataset
 
 
 @st.cache_data
@@ -88,6 +93,26 @@ def load_model() -> Pipeline:
     return build_fallback_pipeline(load_dataset())
 
 
+@st.cache_data
+def compute_live_metrics(dataset: pd.DataFrame) -> dict:
+    X = dataset.drop(columns=["Target"])
+    y = dataset["Target"]
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, stratify=y, random_state=42
+    )
+
+    model = build_fallback_pipeline(pd.concat([X_train, y_train], axis=1))
+    y_pred = model.predict(X_test)
+    y_prob = model.predict_proba(X_test)[:, 1]
+
+    return {
+        "dataset_shape": {"rows": int(dataset.shape[0]), "columns": int(dataset.shape[1])},
+        "accuracy": float(accuracy_score(y_test, y_pred)),
+        "roc_auc": float(roc_auc_score(y_test, y_prob)),
+    }
+
+
 def prediction_label(probability: float) -> str:
     return "High churn risk" if probability >= 0.5 else "Low churn risk"
 
@@ -105,6 +130,8 @@ metrics = load_metrics()
 feature_importance = load_feature_importance()
 dataset = load_dataset()
 model = load_model()
+if not metrics:
+    metrics = compute_live_metrics(dataset)
 
 metric_col1, metric_col2, metric_col3, metric_col4 = st.columns(4)
 metric_col1.metric("Rows", metrics.get("dataset_shape", {}).get("rows", len(dataset)))
@@ -179,4 +206,4 @@ with chart_col2:
     st.bar_chart(flyer_pivot)
 
 st.subheader("Dataset Preview")
-st.dataframe(dataset.head(10), use_container_width=True)
+st.dataframe(dataset.head(10), width="stretch")
